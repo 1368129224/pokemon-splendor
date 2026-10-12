@@ -501,5 +501,224 @@ test('humansConnected：电脑不算；真人全部断线时为 false（DO 据�
   assert.strictEqual(room.humansConnected(), true);
 });
 
+// ---------------------------------------------------------------- 主动离开（{t:'leave'}）
+// 回归：以前点「离开房间」只是闷头断开 socket，服务器把它当意外掉线 —— 座位保留
+// token 等「重连」，其他人眼中永远躺着一个「已断线」的幽灵占座，还会随快照活到
+// DO 下一次唤醒。主动离开必须真正放出座位。
+test('主动离开（大厅）：座位真正让出，名单里不再有幽灵；后面的人前移并收到新 welcome', () => {
+  const { room, last, clear } = makeRoom();
+  room.onMessage('cA', { t: 'join', name: '小明', token: 'tA' });   // seat 0 房主
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });   // seat 1
+  room.onMessage('cC', { t: 'join', name: '小刚', token: 'tC' });   // seat 2
+  clear();
+  room.onMessage('cB', { t: 'leave' });
+  assert.strictEqual(room.seats.length, 2, '座位被让出，而不是留着 token 等「重连」');
+  assert.strictEqual(room.seats.map(s => s.token).join(','), 'tA,tC');
+  assert.strictEqual(room.conns.cB, undefined, '离开者的连接已摘除');
+  assert.strictEqual(last('cC', 'welcome').seat, 1, '后面的人前移，座位号变了必须重新告知');
+  assert.strictEqual(room.conns.cC, 1);
+  const r = last('cA', 'roster');
+  assert.strictEqual(r.players.length, 2, '其他人看到的名单里没有他了');
+  assert.ok(/阿强 离开了房间/.test(last('cA', 'notice').msg), '全房间收到离开提示');
+  // 离开者再进来（即使还揣着旧 token）也是全新玩家，不会悄悄坐回原座
+  room.onMessage('cB2', { t: 'join', name: '阿强', token: 'tB' });
+  assert.strictEqual(room.seats.length, 3);
+  assert.strictEqual(room.seats[2].token, 'tB', '旧 token 认不到旧座位 → 拿了新座位');
+});
+
+test('主动离开（大厅）：房主离开 → 移交房主并告知（否则剩下的人谁也开不了局）', () => {
+  const { room, last, clear } = makeRoom();
+  room.onMessage('cA', { t: 'join', name: '小明', token: 'tA' });
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });
+  clear();
+  room.onMessage('cA', { t: 'leave' });
+  assert.strictEqual(room.hostToken, 'tB', '房主移交给留下的真人');
+  const w = last('cB', 'welcome');
+  assert.ok(w && w.host === true, '新房主必须收到 host=true（客户端据此显示开始/加电脑控件）');
+  assert.ok(/阿强 成为新房主/.test(last('cB', 'notice').msg));
+  assert.strictEqual(last('cB', 'roster').hostSeat, seatOfToken(room, 'tB'));
+  room.onMessage('cB', { t: 'addAI' });                      // 新房主能加电脑（房主权限生效）
+  room.onMessage('cB', { t: 'start', opts: {} });            // 2 座（B + 电脑）才允许开局
+  assert.ok(room.started, '新房主可以开局');
+});
+
+test('主动离开（大厅）：房主与座位号都没变的人不需要额外 welcome，但新房主仍会被告知', () => {
+  const { room, all, clear } = makeRoom();
+  room.onMessage('cA', { t: 'join', name: '小明', token: 'tA' });   // seat 0 房主
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });   // seat 1
+  room.onMessage('cC', { t: 'join', name: '小刚', token: 'tC' });   // seat 2
+  clear();
+  room.onMessage('cC', { t: 'leave' });                             // 末位离开：A/B 座位号都不变
+  assert.strictEqual(all('cA', 'welcome').length, 0, '座位号没变不应重发 welcome');
+  assert.strictEqual(all('cB', 'welcome').length, 0, '座位号没变不应重发 welcome');
+  // 换成房主末位离开：B（seat 1 → 0）收到重排 welcome；新房主若是座位号没变的人也要被单独告知
+  room.onMessage('cA', { t: 'leave' });
+  assert.ok(all('cB', 'welcome').some(m => m.host === true), '成为新房主的人收到了 host=true');
+  assert.strictEqual(room.hostToken, 'tB');
+});
+
+test('主动离开（对局结束）：结算界面点「离开房间」也放座；重开后大厅干净、可补电脑再开', () => {
+  const { room, last, clear } = makeRoom();
+  room.onMessage('cA', { t: 'join', name: '小明', token: 'tA' });
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });
+  room.onMessage('cA', { t: 'start', opts: {} });
+  room.G.phase = 'gameover'; room.G.winner = 0;
+  clear();
+  room.onMessage('cB', { t: 'leave' });
+  assert.strictEqual(room.seats.length, 1, '结算时离开同样让出座位');
+  room.onMessage('cA', { t: 'rematch' });
+  assert.strictEqual(last('cA', 'roster').players.length, 1, '回到大厅：名单里没有幽灵座位');
+  room.onMessage('cA', { t: 'addAI' });
+  room.onMessage('cA', { t: 'start', opts: {} });
+  assert.strictEqual(room.G.numPlayers, 2, '补一个电脑即可重开，人数没有被幽灵虚占');
+});
+
+test('对局进行中主动离开：不能删座位（引擎按座位记账），退化为断线等待代打', () => {
+  const { room, last, clear } = makeRoom();
+  room.now = 0;
+  room.onMessage('cA', { t: 'join', name: '小明', token: 'tA' });
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });
+  room.onMessage('cA', { t: 'start', opts: {} });
+  clear();
+  room.onMessage('cA', { t: 'leave' });                    // A 在对局中点离开
+  assert.strictEqual(room.seats.length, 2, '座位保留：筹码/卡牌按座位记账，抽不得');
+  assert.strictEqual(room.seats[0].connected, false, '标记为断线');
+  assert.strictEqual(room.seats[0].token, 'tA', 'token 保留：刷新还能认回');
+  assert.strictEqual(last('cB', 'roster').players.length, 2);
+  // 对局不卡死：超时后其他人可以代打
+  room.now = 200000;
+  room.onMessage('cB', { t: 'takeover', plan: { action: { type: 'take', colors: ['red', 'blue', 'black'] } } });
+  assert.strictEqual(room.G.turn, 1, '代打推进了离开者的回合');
+});
+
+test('观战者主动离开：只清连接，不影响任何座位', () => {
+  const { room } = makeRoom();
+  room.onMessage('cA', { t: 'join', token: 'tA' });
+  room.onMessage('cB', { t: 'join', token: 'tB' });
+  room.onMessage('cA', { t: 'start', opts: {} });
+  room.onMessage('cS', { t: 'join', token: 'tS' });        // 开局后加入 = 观战
+  room.onMessage('cS', { t: 'leave' });
+  assert.strictEqual(room.seats.length, 2);
+  assert.strictEqual(room.conns.cS, undefined);
+  assert.strictEqual(room.seats.every(s => s.connected), true);
+});
+
+test('只能退出自己的座位：被顶掉的旧连接发 leave 不会动新连接的座位', () => {
+  const { room } = makeRoom();
+  room.join('old', 'A', 'a'); room.join('b', 'B', 'b');
+  room.join('new', 'A', 'a');                               // new 顶掉 old
+  room.onMessage('old', { t: 'leave' });                    // old 已不是任何座位的主人
+  assert.strictEqual(room.seats.length, 2);
+  assert.strictEqual(room.seats[0].connId, 'new');
+  assert.strictEqual(room.seats[0].connected, true);
+});
+
+test('主动离开后会话不留痕：快照往返不复活幽灵座位，房主移交也持久', () => {
+  const { room } = makeRoom();
+  room.onMessage('cA', { t: 'join', name: '小明', token: 'tA' });
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });
+  room.onMessage('cA', { t: 'leave' });                     // 房主走
+  const snap = JSON.parse(JSON.stringify(room.snapshot()));
+  const inbox = {};
+  const r2 = new Room({ cardDB: DB, send: (c, m) => { (inbox[c] = inbox[c] || []).push(m); } });
+  r2.restore(snap);
+  assert.strictEqual(r2.seats.length, 1, 'DO 唤醒后离开者的座位没有回来');
+  assert.strictEqual(r2.hostToken, 'tB', '房主移交被落盘（否则房间永远开不了局）');
+  r2.onMessage('w1', { t: 'join', name: '阿强', token: 'tB' });
+  assert.strictEqual(inbox.w1.filter(m => m.t === 'welcome').pop().host, true, '唤醒后重新加入的房主仍被认出');
+});
+
+// ---------------------------------------------------------------- 房主移出玩家（{t:'kick'}）
+test('房主移出玩家（大厅）：座位放出，被移出者收到 kicked 并与座位解绑，其余人看到提示与位移', () => {
+  const { room, last, clear } = makeRoom();
+  room.onMessage('cA', { t: 'join', name: '小明', token: 'tA' });   // 房主
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });
+  room.onMessage('cC', { t: 'join', name: '小刚', token: 'tC' });
+  clear();
+  room.onMessage('cA', { t: 'kick', seat: 1, name: '阿强' });
+  assert.strictEqual(room.seats.length, 2, '座位被放出');
+  assert.deepStrictEqual(room.seats.map(s => s.token), ['tA', 'tC']);
+  assert.strictEqual(last('cB', 'kicked').msg, '你已被房主移出房间');
+  assert.strictEqual(room.conns.cB, undefined, '被移出者的连接已与座位解绑（不再是广播对象）');
+  assert.strictEqual(last('cC', 'welcome').seat, 1, '后面的人前移并被重新告知座位号');
+  assert.strictEqual(last('cA', 'roster').players.length, 2);
+  assert.ok(/阿强 已被房主移出房间/.test(last('cA', 'notice').msg), '全房间收到提示');
+  // 被移出者拿旧 token 再进来：全新玩家，不会认回旧座位（移出不是封禁，但也不留幽灵）
+  room.onMessage('cB2', { t: 'join', name: '阿强', token: 'tB' });
+  assert.strictEqual(room.seats.length, 3);
+  assert.strictEqual(room.seats[2].token, 'tB');
+  assert.strictEqual(room.hostToken, 'tA', '移出别人不影响房主身份');
+});
+
+test('移出玩家：仅房主；不能移出自己；电脑座位要走 removeAI', () => {
+  const { room, last, clear } = makeRoom();
+  room.onMessage('cA', { t: 'join', name: '小明', token: 'tA' });
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });
+  room.onMessage('cA', { t: 'addAI' });
+  clear();
+  room.onMessage('cB', { t: 'kick', seat: 2, name: '电脑1' });
+  assert.ok(/只有房主/.test(last('cB', 'reject').reason), '非房主不能移出');
+  room.onMessage('cA', { t: 'kick', seat: 0, name: '小明' });
+  assert.ok(/不能移出自己/.test(last('cA', 'reject').reason));
+  room.onMessage('cA', { t: 'kick', seat: 2, name: '电脑1' });
+  assert.ok(/不是真人/.test(last('cA', 'reject').reason), '电脑座位请用移除电脑');
+  assert.strictEqual(room.seats.length, 3, '谁都没被移出');
+});
+
+test('移出玩家：过期的座位/名字组合被拒绝（防连点误伤挪进该座位的人）', () => {
+  const { room, last } = makeRoom();
+  room.onMessage('cA', { t: 'join', name: '小明', token: 'tA' });
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });
+  room.onMessage('cC', { t: 'join', name: '小刚', token: 'tC' });
+  room.onMessage('cA', { t: 'kick', seat: 1, name: '阿强' });   // 阿强被移出 → 小刚前移到 1 号位
+  room.onMessage('cA', { t: 'kick', seat: 1, name: '阿强' });   // 房主界面还没刷新就连点
+  assert.ok(/座位已变化/.test(last('cA', 'reject').reason), '按旧名单连点应被拒绝');
+  assert.strictEqual(room.seats.length, 2, '坐在 1 号位的小刚没有被误伤');
+  assert.strictEqual(room.seats[1].token, 'tC');
+  room.onMessage('cA', { t: 'kick', seat: 1, name: '小刚' });   // 按最新名单操作照常生效
+  assert.strictEqual(room.seats.length, 1);
+});
+
+test('移出玩家：对局进行中拒绝（不能删座位）；对局结束后可用（重开前清人）', () => {
+  const { room, last, clear } = makeRoom();
+  room.onMessage('cA', { t: 'join', token: 'tA' });
+  room.onMessage('cB', { t: 'join', token: 'tB' });
+  room.onMessage('cA', { t: 'start', opts: {} });
+  clear();
+  room.onMessage('cA', { t: 'kick', seat: 1 });
+  assert.ok(/对局进行中/.test(last('cA', 'reject').reason));
+  assert.strictEqual(room.seats.length, 2);
+  room.G.phase = 'gameover'; room.G.winner = 0;
+  room.onMessage('cA', { t: 'kick', seat: 1 });
+  assert.strictEqual(room.seats.length, 1, '对局结束后可以移出');
+  assert.ok(last('cB', 'kicked'), '被移出者收到 kicked 通知');
+  room.onMessage('cA', { t: 'rematch' });
+  assert.strictEqual(last('cA', 'roster').players.length, 1, '重开的大厅没有幽灵座位');
+});
+
+test('移出断线中的玩家：座位照常放出（不卡房间），只是收不到 kicked 通知', () => {
+  const { room, last } = makeRoom();
+  room.onMessage('cA', { t: 'join', token: 'tA' });
+  room.onMessage('cB', { t: 'join', name: '阿强', token: 'tB' });
+  room.leave('cB');                                          // 断线：座位保留等重连
+  assert.strictEqual(room.seats.length, 2);
+  room.onMessage('cA', { t: 'kick', seat: 1, name: '阿强' });
+  assert.strictEqual(room.seats.length, 1, '断线玩家的座位也能放出');
+  assert.strictEqual(room.hostToken, 'tA');
+  assert.strictEqual(last('cB', 'kicked'), undefined, '断线中收不到通知（重连后是新玩家）');
+});
+
+test('移出玩家会落盘：快照往返不复活座位', () => {
+  const { room } = makeRoom();
+  room.onMessage('cA', { t: 'join', token: 'tA' });
+  room.onMessage('cB', { t: 'join', token: 'tB' });
+  room.onMessage('cA', { t: 'kick', seat: 1 });
+  const snap = JSON.parse(JSON.stringify(room.snapshot()));
+  const r2 = new Room({ cardDB: DB, send: () => { } });
+  r2.restore(snap);
+  assert.strictEqual(r2.seats.length, 1, 'DO 唤醒后被移出者的座位没有回来');
+  assert.strictEqual(r2.hostToken, 'tA');
+});
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);

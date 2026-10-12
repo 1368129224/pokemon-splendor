@@ -37,10 +37,14 @@
  *                   {t:'removeAI', seat, name}   host, lobby: remove a bot seat (name = the bot as seen; stale → reject)
  *                   {t:'aiLevel', seat, level, name}  host, lobby: change a bot's difficulty
  *                   {t:'shuffle'}                host, lobby: randomize seat/turn order
+ *                   {t:'leave'}                  leave FOR GOOD: free my seat (lobby / game over)
+ *                   {t:'kick', seat, name}       host, lobby/game over: remove a HUMAN seat (name = what
+ *                                                the host saw on that row; stale → reject. Target gets {t:'kicked'})
  *   room → client:  {t:'welcome', connId, seat, host}   (re-sent whenever my seat index changes)
  *                   {t:'roster', players:[{seat,name,connected,ai}], hostSeat, started, maxSeats, shuffleCount}
  *                   {t:'shuffled', count, first}  the host randomized the order (count = rerolls this lobby)
  *                   {t:'notice', msg}            short room-wide announcement (a joining friend replaced a bot)
+ *                   {t:'kicked', msg}            YOU were removed from the room by the host → back to home
  *                   {t:'state', seq, state}      redacted snapshot for this viewer
  *                   {t:'reject', reason, seq}
  *                   {t:'lobby'}                  back to the lobby (rematch)
@@ -190,6 +194,67 @@
       this._roster();
     }
 
+    // 玩家点「离开房间」（{t:'leave'}）—— 与上面的传输层断线 leave() 是两回事：
+    // 断线可能是意外（刷新/掉网），座位要留着等人重连；主动离开是明确要走，
+    // 座位必须真正让出来，否则其他人眼中永远躺着一个「已断线」的幽灵占座，
+    // 而 token 会随快照活到 DO 下一次唤醒。
+    // 对局进行中（play）不能删座位：引擎按座位索引记账（筹码/卡牌守恒会破），
+    // 退化为普通断线交给超时代打；还在大厅或对局已结束（gameover）才真正让出。
+    _leaveRoom(connId) {
+      const seat = this.conns[connId];
+      const st = (seat != null && seat >= 0) ? this.seats[seat] : null;
+      const mine = !!(st && !st.ai && st.connId === connId);    // 只能退出自己的座位
+      if (!mine || (this.started && this.G && this.G.phase === 'play')) return this.leave(connId);
+      const wasHost = this.hostToken != null && st.token === this.hostToken;
+      const name = st.name;
+      delete this.conns[connId];          // 先摘连接：重排时不会再给这个将关闭的 socket 发消息
+      // 房主走了必须移交，否则剩下的人谁也开不了局/加不了电脑，房间直接废掉
+      let heir = null;
+      if (wasHost) for (let i = 0; i < this.seats.length; i++) {
+        const s = this.seats[i];
+        if (i !== seat && !s.ai && s.token) { heir = s; break; }
+      }
+      this.hostToken = wasHost ? ((heir && heir.token) || null) : this.hostToken;   // 移交要在重排前定好（roster 才能立刻标对房主）
+      this._freeSeat(seat);
+      if (heir && heir.connId != null) {
+        // 新房主的客户端靠 welcome.host 显示房主控件（开始/加电脑/再来一局）。
+        // 座位号变了的人重排时已收到 welcome；没变的人必须补发，否则永远不知道自己成了房主。
+        this.send(heir.connId, { t: 'welcome', connId: heir.connId, seat: this.conns[heir.connId], host: true });
+      }
+      this._broadcast({ t: 'notice', msg: name + ' 离开了房间' + (heir ? '，' + heir.name + ' 成为新房主' : '') });
+    }
+
+    // 让出一个座位（大厅/对局已结束）：走与移除电脑相同的重排路径，后面的人前移，
+    // 座位号变了的人由 _reorderSeats 重发 welcome。对局进行中绝不能调用（引擎按座位记账）。
+    _freeSeat(seat) {
+      const order = [];
+      for (let i = 0; i < this.seats.length; i++) if (i !== seat) order.push(i);
+      this._reorderSeats(order, false);
+    }
+
+    // 房主移出玩家（{t:'kick', seat, name}）：与主动离开同为「真正放出座位」，只是由房主发起。
+    // 只在大厅/对局已结束可用；被移出者收到 {t:'kicked'}，客户端据此退回首页。
+    // name 是房主点击那一行时看到的名字：名单在他操作前变了（有人离开/被移出）就拒绝，
+    // 绝不按过期的座位号误伤别人 —— 与 removeAI/aiLevel 的防连点守卫同一套约定。
+    _kick(connId, msg) {
+      if (!this._isHost(connId)) return this.send(connId, { t: 'reject', reason: '只有房主可以移出玩家' });
+      if (this.started && (!this.G || this.G.phase === 'play')) {
+        return this.send(connId, { t: 'reject', reason: '对局进行中，回到大厅后再移出玩家' });
+      }
+      const seat = Number(msg && msg.seat);
+      const st = Number.isInteger(seat) ? this.seats[seat] : null;
+      if (!st || st.ai) return this.send(connId, { t: 'reject', reason: '该座位不是真人（电脑请直接移除）' });
+      if (seat === this.conns[connId]) return this.send(connId, { t: 'reject', reason: '不能移出自己，请直接离开房间' });
+      if (msg.name != null && st.name !== msg.name) {
+        return this.send(connId, { t: 'reject', reason: '座位已变化，请按最新名单再操作' });
+      }
+      const name = st.name, cid = st.connId;   // 被移出者可能恰好断线（cid=null）：座位照常放出，只是收不到通知
+      if (cid != null) delete this.conns[cid]; // 先摘连接：重排不会再给他发 welcome，kicked 稍后单独发
+      this._freeSeat(seat);
+      if (cid != null) this.send(cid, { t: 'kicked', msg: '你已被房主移出房间' });
+      this._broadcast({ t: 'notice', msg: name + ' 已被房主移出房间' });
+    }
+
     // Quiet transport re-attach after the DO hibernates: restore a connId→seat
     // mapping by token ONLY — no welcome/roster/state side-effects (those happen
     // when the client itself re-sends join/sync on a real reconnect). Works even
@@ -227,6 +292,8 @@
         case 'removeAI': return this._removeAI(connId, msg.seat, msg.name);
         case 'aiLevel':  return this._setAILevel(connId, msg.seat, msg.level, msg.name);
         case 'shuffle':  return this._shuffle(connId);
+        case 'leave':    return this._leaveRoom(connId);
+        case 'kick':     return this._kick(connId, msg);
         case 'sync':     return this._stateTo(connId);
       }
     }

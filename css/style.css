@@ -99,6 +99,9 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .lr-lv{flex:none;font-size:12px;color:var(--muted)}
 .lr-diff{flex:none;min-height:40px;font-size:13px;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:#0b0f2e;color:var(--ink)}
 .lobby-roster .lr-x,.lobby-roster .lr-add{flex:none;min-height:40px;min-width:40px;padding:4px 12px;font-size:13px;line-height:1.2}
+/* 房主移出真人：偏红以示与「移除电脑」不同；两段式确认的点亮态 */
+.lobby-roster .lr-kick{color:var(--red)}
+.lobby-roster .lr-kick[data-armed]{border-color:var(--red);font-weight:700}
 .lr-first,.lr-host{white-space:nowrap}
 .lr-add:disabled{opacity:.5}
 .lobby-tools{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px 10px;margin:-2px 0 8px;font-size:12.5px;color:var(--muted);line-height:1.5}

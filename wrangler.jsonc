@@ -25,6 +25,6 @@
   // Custom domain — also present in the dashboard; declared here so it's
   // version-controlled. The Worker serves the game + /room/:code/ws on it too.
   "routes": [
-    { "pattern": "pokemon-splendor.try-board-game.uk", "custom_domain": true }
+    { "pattern": "pokemon-splendor.734007.xyz", "custom_domain": true }
   ]
 }

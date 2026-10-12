@@ -30,9 +30,11 @@ const AI_TURN_DELAY_MS = 1200;
 // 任何会改变房间状态的消息都必须落盘。name 和 rematch 也在其列：
 // 心跳的 auto-response 不唤醒 DO，空闲房间几十秒就被驱逐；只要没落盘，
 // 改的名字/重开后的大厅状态就会在唤醒时被旧快照覆盖回去（生产实测过）。
-// 大厅里加/删电脑、改难度、随机座位同理。
+// 大厅里加/删电脑、改难度、随机座位同理。leave（主动离开）释放座位并可能
+// 移交房主，kick（房主移出玩家）同理 —— 不落盘的话，被放出的座位会在 DO
+// 唤醒后从旧快照里复活成幽灵。
 const MUTATING = new Set(['join', 'start', 'action', 'name', 'rematch', 'takeover',
-  'addAI', 'removeAI', 'aiLevel', 'shuffle']);
+  'addAI', 'removeAI', 'aiLevel', 'shuffle', 'leave', 'kick']);
 
 export class Room {
   constructor(state, env) {

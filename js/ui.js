@@ -220,6 +220,13 @@
     Net.on('reject', (m) => { if (UI.net) { UI.net.takeoverBusy = false; UI.net.pendingAction = false; } flashHint((m && m.reason) || '操作被拒绝'); if (G) render(); });
     Net.on('over', () => { });
     Net.on('notice', (m) => { if (UI.net && m && m.msg) flashHint(m.msg, 'info'); });   // 例如：朋友加入满员房间、顶替了一个电脑
+    // 被房主移出：座位已在服务端放出。本地退场并忘掉本机 token（复用 leaveOnline
+    // 的清理路径；它多发的那条 leave 在服务端对已摘除的连接是无害空操作）。
+    Net.on('kicked', (m) => {
+      if (!UI.net) return;
+      leaveOnline();
+      flashHint((m && m.msg) || '你已被房主移出房间');
+    });
     // 房主随机了座位顺序：人人都看得到结果和「第几次」—— 反复重随抢先手会被全桌看见
     Net.on('shuffled', (m) => {
       if (!UI.net) return;
@@ -276,6 +283,10 @@
               Object.keys(AI_LEVEL_ZH).map(lv => `<option value="${lv}"${lv === p.ai ? ' selected' : ''}>${AI_LEVEL_ZH[lv]}</option>`).join('') +
               `</select><button class="ghost lr-x" data-remove="${p.seat}" aria-label="移除 ${escapeHTML(p.name)}" title="移除电脑">✕</button>`
             : `<span class="lr-lv">${AI_LEVEL_ZH[p.ai] || ''}</span>`;
+        } else if (canEdit && !you) {
+          // 房主可移出真人玩家（服务器二次校验房主身份与大厅阶段）；点击时看到的
+          // 名字随请求一起带上，过期名单会被拒绝而不是误伤挪进该座位的人
+          tail += `<button class="ghost lr-x lr-kick" data-kick="${p.seat}" aria-label="移出 ${escapeHTML(p.name)}" title="移出该玩家">✕</button>`;
         }
         return `<div class="lr-row${you ? ' me' : ''}">${mark}<span class="lr-seat" aria-hidden="true">${p.seat + 1}</span>` +
           `<span class="lr-name">${escapeHTML(p.name)}${you ? '（你）' : ''}<span class="sr-only">${sr}</span></span>${tail}</div>`;
@@ -342,7 +353,9 @@
   function leaveOnline() {
     stopIdleTimer();
     stopTitleFlash();
-    if (window.Net) Net.close();
+    // 先发 {t:'leave'} 让服务器真正放出座位（单纯断开会让其他人永远看到
+    // 一个「已断线」的幽灵占座），并忘掉本机 token；旧缓存里没有 leave 时退回 close。
+    if (window.Net) (Net.leave ? Net.leave() : Net.close());
     UI.net = null; gameEpoch++; document.body.classList.remove('has-card-selection');
     try { history.replaceState(null, '', location.pathname); } catch (e) { }
     $('#lobby').classList.add('hidden'); $('#game').classList.add('hidden');
@@ -1780,6 +1793,20 @@
     if (lobbyRoster) {
       lobbyRoster.addEventListener('click', (e) => {
         if (!window.Net || !UI.net) return;
+        // 移出真人分两步：先点亮成「确认?」，再点一次才真发 —— 误触不至于把朋友踢出去
+        const kk = e.target.closest('[data-kick]');
+        if (kk && !kk.disabled) {
+          if (!kk.dataset.armed) {
+            kk.dataset.armed = '1'; kk.textContent = '确认?'; kk.title = '再点一次确认移出';
+            setTimeout(() => { if (kk.isConnected) { delete kk.dataset.armed; kk.textContent = '✕'; kk.title = '移出该玩家'; } }, 2500);
+            return;
+          }
+          const seatNo = Number(kk.dataset.kick), seen = (UI.net.roster || []).find(p => p.seat === seatNo);
+          kk.disabled = true;                                // 防连点；名单一变按钮就被重绘
+          setTimeout(() => { kk.disabled = false; }, 1500);
+          lobbySent(Net.kick(seatNo, seen ? seen.name : undefined));
+          return;
+        }
         const add = e.target.closest('[data-add]'), rm = e.target.closest('[data-remove]');
         const btn = add || rm;
         if (!btn || btn.disabled) return;

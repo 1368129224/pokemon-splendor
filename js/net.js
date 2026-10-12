@@ -15,7 +15,8 @@
  *   Net.rematch()                 host: end-of-game -> back to lobby, same seats
  *   Net.addAI(level) / removeAI(seat, name) / setAILevel(seat, level, name) / shuffle()
  *                                 host, lobby: bot seats + random seat order
- *   Net.sync() / Net.close()
+ *   Net.kick(seat, name)         host, lobby: remove a human seat (we get {t:'kicked'} if it's us)
+ *   Net.sync() / Net.close() / Net.leave()
  * ===================================================================== */
 (function () {
   'use strict';
@@ -92,11 +93,23 @@
   function addAI(level) { return send({ t: 'addAI', level }); }
   // name = 该行电脑的名字：座位号会因移除/随机而变化，服务器据此拒绝过期的操作
   function removeAI(seat, name) { return send({ t: 'removeAI', seat, name }); }
+  // 房主移出真人玩家：同样带上点击时看到的名字，防止过期座位号误伤别人
+  function kick(seat, name) { return send({ t: 'kick', seat, name }); }
   function setAILevel(seat, level, name) { return send({ t: 'aiLevel', seat, level, name }); }
   function shuffle() { return send({ t: 'shuffle' }); }
   function close() { closedByUs = true; clearTimeout(reconnect); stopBeat(); if (ws) { try { ws.onclose = null; ws.close(); } catch (e) { } } ws = null; }
+  // 忘掉本机在某个房间的身份：主动离开后不应再靠旧 token 坐回原座。
+  function forgetToken(code) {
+    const k = 'pkmn_net_token_' + code;
+    sessionTokens.delete(k);
+    try { localStorage.removeItem(k); } catch (e) { }
+  }
+  // 主动离开房间（点「离开房间」）：与 close() 只是闷头断开不同，先发 {t:'leave'} 让
+  // 服务器真正放出座位（否则其他人眼中永远躺着一个「已断线」的幽灵占座），再忘掉
+  // 本机身份 —— 之后进同一房间码就是全新的玩家。断线状态下发不出去时退化为旧行为。
+  function leave() { if (cfg) { send({ t: 'leave' }); forgetToken(cfg.code); } close(); }
 
-  const api = { connect, on, send, action, start, sync, setName, rematch, rejoin, addAI, removeAI, setAILevel, shuffle, close, parseRoomCode,
+  const api = { connect, on, send, action, start, sync, setName, rematch, rejoin, addAI, removeAI, setAILevel, shuffle, kick, close, leave, forgetToken, parseRoomCode,
                 isOpen: () => !!(ws && ws.readyState === 1) };
   if (typeof window !== 'undefined') window.Net = api;
   // 纯函数部分（parseRoomCode）可被 Node 测试直接 require；其余函数依赖浏览器 API。
