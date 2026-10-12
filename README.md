@@ -97,6 +97,12 @@ python test/mobile_ux_audit.py     # 手机/小屏/横屏 UX 审计（playwright
 ## 部署
 
 - **纯静态**（单机热座 + AI）：任意静态托管即可（如 GitHub Pages），双击 `index.html` 同款。
+- **Docker Compose**（自托管 / 私有化运行）：
+  ```bash
+  # 启动服务（默认映射端口 8080）
+  docker compose up -d
+  ```
+  启动后访问 `http://localhost:8080` 即可游玩（单机热座 + 电脑对手）。如需修改对外端口，可在 `docker-compose.yml` 中调整 `ports` 配置。
 - **含联机**：用 Cloudflare Workers 部署（`npx wrangler deploy`）。`wrangler.jsonc` 已配置 ASSETS 静态资源绑定、`Room` Durable Object 与自定义域名；Worker 把 `/room/:code/ws` 路由到对应房间的 DO，其余路径回退静态资源。
 
 ## 致谢

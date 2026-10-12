@@ -1,0 +1,7 @@
+services:
+  pokemon-splendor:
+    build: .
+    container_name: pokemon-splendor
+    restart: unless-stopped
+    ports:
+      - "8080:80"

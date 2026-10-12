@@ -1,0 +1,15 @@
+.git
+.github
+.claude
+.wrangler
+node_modules
+worker
+train
+test
+docs
+assets/cards/_qc
+*.md
+*.log
+docker-compose*.yml
+Dockerfile*
+.dockerignore
