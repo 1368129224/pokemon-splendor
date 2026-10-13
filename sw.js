@@ -1,5 +1,5 @@
 /* Pokémon Splendor — service worker (offline app shell + runtime card-image cache) */
-const VER = 'ps-cache-v17'; // online lobby: host can kick a human seat (two-step confirm)
+const VER = 'ps-cache-v19'; // online lobby: host can kick a human seat (two-step confirm)
 const BALLS = ['red', 'blue', 'black', 'pink', 'yellow', 'purple'].map(c => `./assets/balls/${c}.png`);
 const BACKS = ['stage1', 'stage2', 'stage3', 'rare', 'legend'].map(t => `./assets/backs/${t}.webp`);
 BACKS.push('./assets/backs/pokemart-1.png', './assets/backs/pokemart-2.png', './assets/backs/pokemart-3.png');

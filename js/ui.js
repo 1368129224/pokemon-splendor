@@ -1072,16 +1072,33 @@
   }
 
   function renderPlayers() {
-    const wrap = $('#players');
-    wrap.innerHTML = '';
+    const oppWrap = $('#opponents-list');
+    const myWrap = $('#my-player-card');
+    const oldWrap = $('#players');
+    if (oldWrap) oldWrap.innerHTML = '';
+    if (oppWrap) oppWrap.innerHTML = '';
+    if (myWrap) myWrap.innerHTML = '';
+
+    let myIdx = -1;
+    if (isOnline()) {
+      myIdx = onlineSeat() >= 0 ? onlineSeat() : 0;
+    } else if (UI.humans === 1) {
+      myIdx = G.players.findIndex(p => !p.isAI);
+      if (myIdx < 0) myIdx = G.turn;
+    } else {
+      myIdx = G.turn;
+    }
+
     for (let i = 0; i < G.numPlayers; i++) {
       const p = G.players[i];
       const b = E.bonuses(G, p);
-      const tot = E.tokenTotal(p);                // total Poké Balls held (10 max at turn end)
+      const tot = E.tokenTotal(p);
       const active = (i === G.turn && G.phase === 'play');
+      const isMe = (i === myIdx);
       const el = document.createElement('div');
-      el.className = 'player' + (active ? ' active' : '') + (p.isAI ? ' ai' : '');
-      // bonus + token chips
+      el.className = 'player' + (active ? ' active' : '') + (p.isAI ? ' ai' : '') + (isMe ? ' is-me' : '');
+      el.dataset.player = i;
+
       let chips = '';
       for (const c of E.COLORS) {
         chips += `<div class="chip" aria-label="${BALL_NAMES[c]}：手中 ${p.tokens[c]} 个，永久折扣 ${b[c]}">
@@ -1089,8 +1106,7 @@
         </div>`;
       }
       chips += `<div class="chip master" aria-label="大师球：手中 ${p.tokens.purple} 个">${ball('purple', 'sm')}<span class="num">${p.tokens.purple}</span></div>`;
-      // captured cards grouped by effective bonus color (Pokémart copy cards take
-      // their associated colour; effect cards with no colour go in a final group).
+
       let stacks = '';
       const groups = E.COLORS.map(c => ({ key: c, ids: p.board.filter(id => E.effBonusColor(G, p, id) === c) }));
       groups.push({ key: null, ids: p.board.filter(id => E.effBonusColor(G, p, id) === null) });
@@ -1103,8 +1119,7 @@
         });
         stacks += `<div class="color-stack"><div class="ministack">${st}</div></div>`;
       }
-      // reserve: revealed only for YOUR OWN hand; others show card-backs.
-      // (online, opponents' reserves arrive as {hidden,tier} stubs, never real ids.)
+
       const revealReserve = !p.isAI && (isOnline() ? (i === onlineSeat()) : active);
       let rz = '';
       if (p.reserve.length) {
@@ -1118,10 +1133,11 @@
         const hint = revealReserve ? '（点击可捕捉）' : '';
         rz = `<div class="reserve-zone"><div class="rz-title">保留区 (${p.reserve.length})${hint}</div><div class="pcards">${cards}</div></div>`;
       }
+
       el.innerHTML =
         `<div class="player-head">
            <div class="pavatar" style="background-color:${SEAT_COLORS[i]};background-image:url(${seatAvatar(i)});box-shadow:0 0 0 2px ${SEAT_COLORS[i]}"></div>
-           <div class="pname">${netDot(i)}${escapeHTML(p.name)}</div>
+           <div class="pname">${netDot(i)}${escapeHTML(p.name)}${isMe ? ' <span class="my-tag">（我）</span>' : ''}</div>
            <div class="ptokens${tot > E.TOKEN_MAX ? ' over' : tot === E.TOKEN_MAX ? ' full' : ''}" title="持有的精灵球总数（回合结束上限 ${E.TOKEN_MAX} 个）" aria-label="持有精灵球 ${tot}/${E.TOKEN_MAX}"><span class="pt-lbl">球</span>${tot}<small>/${E.TOKEN_MAX}</small></div>
            <div class="pscore" aria-label="${E.scoreOf(G, p)}分，目标${G.megasEnabled ? E.MEGA_WIN_SCORE : E.WIN_SCORE}分">${E.scoreOf(G, p)}<small>/${G.megasEnabled ? E.MEGA_WIN_SCORE : E.WIN_SCORE}</small></div>
          </div>
@@ -1129,7 +1145,10 @@
          <div class="pstats">${chips}</div>
          <div class="pcards">${stacks || '<span style="color:var(--muted);font-size:12px">尚无宝可梦</span>'}</div>
          ${rz}`;
-      wrap.appendChild(el);
+
+      if (oldWrap) oldWrap.appendChild(el.cloneNode(true));
+      if (isMe && myWrap) myWrap.appendChild(el);
+      else if (!isMe && oppWrap) oppWrap.appendChild(el);
     }
   }
 
@@ -1900,13 +1919,16 @@
       else if (b.dataset.evoFrom) doEvolve(b.dataset.evoFrom, b.dataset.evoTo);
     });
     // own-reserve capture: clicking a revealed reserve mini-card selects it
-    $('#players').addEventListener('click', (e) => {
+    const onPlayerClick = (e) => {
       const mc = e.target.closest('[data-reserve-capture]');
       if (mc && interactable()) { UI.selCard = mc.dataset.reserveCapture; UI.selDeck = null; UI.pick = []; render(); focusActionPanel(); return; }
       // any other captured/opponent card: tap to enlarge & read
       const z = e.target.closest('[data-zoom]');
       if (z && z.dataset.zoom) openInspect(z.dataset.zoom, '', z.getAttribute('aria-label') || '卡牌详情');
-    });
+    };
+    if ($('#players')) $('#players').addEventListener('click', onPlayerClick);
+    if ($('#opponents-list')) $('#opponents-list').addEventListener('click', onPlayerClick);
+    if ($('#my-player-card')) $('#my-player-card').addEventListener('click', onPlayerClick);
     // Div-based board controls retain the card layout while remaining fully keyboard operable.
     document.addEventListener('keydown', (e) => {
       const dialog = $$('.modal:not(.hidden),#inspect:not(.hidden)').find(x => !x.classList.contains('hidden'));

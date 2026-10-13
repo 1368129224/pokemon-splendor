@@ -205,25 +205,89 @@ button:disabled{opacity:.45;cursor:not-allowed}
 #field{display:flex;flex-direction:column;gap:10px;container-type:inline-size;container-name:game-field}
 #controls{display:flex;flex-direction:column;gap:14px}
 
-/* desktop / large tablet: board left, controls + log right, players full-width */
+/* desktop / large tablet: 3-column layout
+   左列：卡牌区 (board)
+   中列：我的资源 + 精灵球供应 + 游戏记录 (board-side)
+   右列：其他玩家列表 (opponents-panel)
+   底部：自己的状态 (my-player-bar) */
 @media (min-width:1000px){
-  #game{display:grid;gap:14px;padding:14px;
-    grid-template-columns:minmax(0,1fr) 340px;
+  #game{
+    display:grid;
+    gap:14px;
+    padding:14px;
+    grid-template-columns:1fr;
     grid-template-areas:
-      "topbar  topbar"
-      "board   controls"
-      "board   log"
-      "players players";}
+      "topbar"
+      "main"
+      "action"
+      "mybar";
+  }
   #topbar{grid-area:topbar;margin:-14px -14px 0;border-radius:0}
-  #board{grid-area:board}
-  #controls{grid-area:controls;position:sticky;top:62px;align-self:start;max-height:calc(100dvh - 76px);overflow:auto;overscroll-behavior:contain}
-  #log{grid-area:log;align-self:start}
-  #players{grid-area:players}
-  #action-bar{position:sticky;top:0;z-index:4;box-shadow:0 10px 24px rgba(7,9,28,.35)}
+  #turn-banner{flex:0 1 280px}
+  .topbar-left{display:none}
   #score-strip{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;overflow-x:auto;scrollbar-width:none}
   #score-strip::-webkit-scrollbar{display:none}
-  .topbar-left{display:none}
-  #turn-banner{flex:0 1 280px}
+
+  #game-main{
+    grid-area:main;
+    display:grid;
+    grid-template-columns:minmax(0, 1.8fr) 300px 320px;
+    gap:14px;
+    align-items:start;
+  }
+  #board{min-width:0}
+  #board-side{
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+    position:sticky;
+    top:62px;
+  }
+  #opponents-panel{
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    position:sticky;
+    top:62px;
+  }
+  #opponents-list{
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    max-height:calc(100dvh - 200px);
+    overflow-y:auto;
+    overscroll-behavior:contain;
+  }
+  .opponents-title{
+    font-size:13px;
+    font-weight:800;
+    color:var(--muted);
+    letter-spacing:1px;
+    padding-left:4px;
+  }
+
+  #controls{
+    grid-area:action;
+    position:sticky;
+    bottom:0;
+    z-index:10;
+  }
+  #action-bar{
+    border-color:rgba(255,213,74,.38);
+    background:linear-gradient(145deg,rgba(42,50,112,.96),rgba(27,33,78,.96));
+    box-shadow:0 -4px 16px rgba(0,0,0,.35);
+  }
+
+  #my-player-bar{
+    grid-area:mybar;
+    border-top:1px solid var(--line);
+    padding-top:10px;
+  }
+  #my-player-card .player{
+    border-color:rgba(255,213,74,.6);
+    background:linear-gradient(135deg, rgba(29,35,80,.95), rgba(20,25,65,.95));
+    box-shadow:0 4px 16px rgba(0,0,0,.3);
+  }
 }
 @media (max-width:520px){
   .topbar-left{display:none}
@@ -507,10 +571,15 @@ body.tutorial-choice-open #tut-mask,body.tutorial-choice-open #tut-bubble{visibi
 @media (max-width:999px){
   #game{display:flex;flex-direction:column;min-height:var(--app-h);padding-bottom:calc(var(--dock-h) + var(--sa-b) + 6px)}
   #zoom{display:none !important}
+  #game-main{display:flex;flex-direction:column;order:1}
   #board{order:1;padding:8px max(6px,var(--sa-r)) 0 max(6px,var(--sa-l))}
+  #board-side{display:contents}
+  #opponents-panel{order:2;padding:10px max(8px,var(--sa-r)) 0 max(8px,var(--sa-l))}
+  #opponents-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+  #my-player-bar{order:3;padding:10px max(8px,var(--sa-r)) 12px max(8px,var(--sa-l))}
   #players{order:2;padding:10px max(8px,var(--sa-r)) 12px max(8px,var(--sa-l));grid-auto-flow:row;grid-auto-columns:auto;
     grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
-  #log{order:3;margin:0 max(8px,var(--sa-l)) 8px max(8px,var(--sa-r));max-height:170px}
+  #log{order:4;margin:0 max(8px,var(--sa-l)) 8px max(8px,var(--sa-r));max-height:170px}
 
   /* the dock: supply + contextual actions, pinned in the thumb zone */
   #controls{position:fixed;left:0;right:0;bottom:0;z-index:46;order:99;gap:6px;
